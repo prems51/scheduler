@@ -1,0 +1,22 @@
+node_modules/
+out/
+dist/
+dist-electron/
+build/
+release/
+
+# local databases and backups
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# logs / os junk
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.env
+.env.local

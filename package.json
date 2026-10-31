@@ -1,0 +1,53 @@
+{
+  "name": "timetable-manager",
+  "version": "0.1.0",
+  "description": "Timetable Manager - CSE department timetable builder for Moradabad Institute of Technology",
+  "main": "./out/main/index.js",
+  "author": "CSE Department, MIT Moradabad",
+  "private": true,
+  "scripts": {
+    "start": "electron-vite preview",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "test": "npm run lint && node scripts/rebuild-node.js && vitest run",
+    "lint": "eslint .",
+    "postinstall": "node scripts/ensure-native.js",
+    "rebuild:electron": "electron-builder install-app-deps",
+    "rebuild:node": "node scripts/rebuild-node.js",
+    "check:pdf": "electron tests/pdf-smoke.mjs"
+  },
+  "build": {
+    "appId": "in.ac.mit.timetablemanager",
+    "productName": "Timetable Manager",
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "exceljs": "^4.4.0",
+    "pdf-lib": "^1.17.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.15.3",
+    "electron-reload": "^2.0.0-alpha.1",
+    "electron-vite": "^6.0.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  },
+  "allowScripts": {
+    "better-sqlite3@13.0.3": true
+  }
+}
