@@ -20,3 +20,11 @@ npm-debug.log*
 Thumbs.db
 .env
 .env.local
+
+# Local attachments, review assets, and sample workbooks
+.cloud-attachments/
+.freebuff/
+pdf-check/
+prompts/
+screenshots/
+*.xlsx
