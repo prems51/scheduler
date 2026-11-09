@@ -5,7 +5,9 @@ import TimetableFormDialog from './timetableSetup/TimetableFormDialog'
 import SectionFormDialog from './timetableSetup/SectionFormDialog'
 import AllocationDialog from './timetableSetup/AllocationDialog'
 import CopyAllocationsDialog from './timetableSetup/CopyAllocationsDialog'
+import DuplicateTimetableDialog from './timetableSetup/DuplicateTimetableDialog'
 import LegendPreview from './timetableSetup/LegendPreview'
+import { useToast } from '../context/ToastContext'
 import { groupSectionsBySemester } from '../lib/sectionGroups'
 
 const COLLAPSE_KEY = 'timetable-manager:collapsed-semesters'
@@ -21,6 +23,7 @@ function readCollapsed() {
 
 export default function TimetableSetup() {
   const { timetables, activeTimetable, activeId, setActiveId, refreshTimetables } = useActiveTimetable()
+  const { notify } = useToast()
 
   const [venues, setVenues] = useState([])
   const [subjects, setSubjects] = useState([])
@@ -31,6 +34,7 @@ export default function TimetableSetup() {
   const [error, setError] = useState('')
 
   const [timetableDialog, setTimetableDialog] = useState(null)
+  const [duplicateOpen, setDuplicateOpen] = useState(false)
   // { section: null | section, semester: number | null }
   const [sectionDialog, setSectionDialog] = useState(null)
   const [collapsedSemesters, setCollapsedSemesters] = useState(readCollapsed)
@@ -139,6 +143,16 @@ export default function TimetableSetup() {
     setActiveId(timetable.id)
   }
 
+  async function handleTimetableDuplicated(result) {
+    setDuplicateOpen(false)
+    await refreshTimetables()
+    setActiveId(result.timetable.id)
+    const counts = result.counts
+    notify('success', 'Timetable duplicated', [
+      `${result.timetable.title} · ${counts.sections} section(s), ${counts.slots} class(es), ${counts.availability} request(s) copied.`
+    ])
+  }
+
   async function handleSectionSaved(section) {
     setSectionDialog(null)
     setCollapsedSemesters((previous) => {
@@ -217,6 +231,15 @@ export default function TimetableSetup() {
         >
           Edit timetable
         </button>
+        <button
+          type="button"
+          className="button button-secondary"
+          onClick={() => setDuplicateOpen(true)}
+          disabled={!activeTimetable}
+          title="Copy this timetable into a new term"
+        >
+          Duplicate
+        </button>
       </div>
 
       {activeTimetable && (
@@ -250,7 +273,16 @@ export default function TimetableSetup() {
             </div>
 
             {sections.length === 0 ? (
-              <p className="muted small">No sections yet. Add the first one.</p>
+              <div className="empty-state empty-state-inline">
+                <p>No sections yet. Click Add section to start this timetable.</p>
+                <button
+                  type="button"
+                  className="button button-small"
+                  onClick={() => setSectionDialog({ section: null, semester: null })}
+                >
+                  Add section
+                </button>
+              </div>
             ) : (
               <div className="semester-groups">
                 {semesterGroups.map((group) => {
@@ -460,6 +492,14 @@ export default function TimetableSetup() {
           timetable={timetableDialog === 'edit' ? activeTimetable : null}
           onClose={() => setTimetableDialog(null)}
           onSaved={handleTimetableSaved}
+        />
+      )}
+
+      {duplicateOpen && activeTimetable && (
+        <DuplicateTimetableDialog
+          timetable={activeTimetable}
+          onClose={() => setDuplicateOpen(false)}
+          onDuplicated={handleTimetableDuplicated}
         />
       )}
 

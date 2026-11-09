@@ -25,22 +25,33 @@ export function payloadFromRow(row) {
   return payload
 }
 
-/** { id, payload, teacherIds, code } — everything needed to re-save or delete. */
+/**
+ * { id, payload, teacherIds, code, constraintOverride } — everything needed to
+ * re-save or delete, including whether the row was saved against a request.
+ */
 export function snapshotFromRow(row) {
   return {
     id: row?.id ?? null,
     payload: payloadFromRow(row),
     teacherIds: [...(row?.teacher_ids ?? [])],
-    code: row?.subject_code || row?.label || ''
+    code: row?.subject_code || row?.label || '',
+    constraintOverride: Number(row?.constraint_override ?? 0)
   }
 }
 
-export function snapshotFromPayload(payload, teacherIds, id = null, code = '') {
+export function snapshotFromPayload(
+  payload,
+  teacherIds,
+  id = null,
+  code = '',
+  constraintOverride = 0
+) {
   return {
     id,
     payload: payloadFromRow(payload),
     teacherIds: [...(teacherIds ?? [])],
-    code: code || ''
+    code: code || '',
+    constraintOverride: Number(constraintOverride ?? 0)
   }
 }
 

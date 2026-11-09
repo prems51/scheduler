@@ -59,6 +59,45 @@ function CellContent({ slot, linesFor = slotLines }) {
   )
 }
 
+/** Does this slot belong to the target being shown in the overlay? */
+function slotMatchesOverlay(slot, overlay) {
+  if (!overlay) return false
+  const id = Number(overlay.id)
+  if (overlay.type === 'teacher') {
+    return (slot.teacher_ids ?? []).map(Number).includes(id)
+  }
+  if (overlay.type === 'venue') return Number(slot.venue_id) === id
+  return Number(slot.section_id) === id
+}
+
+/** Worst requested level the slot occupies: 'cannot' beats 'avoid'. */
+function overlayLevelForSlot(slot, overlay) {
+  if (!slotMatchesOverlay(slot, overlay)) return null
+  const start = Number(slot.start_period)
+  const span = Number(slot.span ?? 1)
+  let level = null
+  for (let period = start; period < start + span; period += 1) {
+    const cell = overlay.matrix?.get(`${Number(slot.day)}-${period}`)
+    if (cell?.level === 'cannot') return 'cannot'
+    if (cell?.level === 'avoid') level = 'avoid'
+  }
+  return level
+}
+
+/** Requested level covered by a slot (faculty view hatching). */
+function requestLevelForSlot(slot, requestCells) {
+  if (!requestCells) return null
+  const start = Number(slot.start_period)
+  const span = Number(slot.span ?? 1)
+  let level = null
+  for (let period = start; period < start + span; period += 1) {
+    const value = requestCells.get(`${Number(slot.day)}-${period}`)
+    if (value === 'cannot') return 'cannot'
+    if (value === 'avoid') level = 'avoid'
+  }
+  return level
+}
+
 function rowCells(
   row,
   day,
@@ -71,7 +110,9 @@ function rowCells(
   onAddActivity,
   onCellContext,
   linesFor,
-  freeSet
+  freeSet,
+  availabilityOverlay,
+  requestCells
 ) {
   const cells = []
 
@@ -88,12 +129,35 @@ function rowCells(
     )
 
     if (cell.type === 'empty') {
+      const overlayCell = availabilityOverlay?.matrix?.get(`${day}-${cellPeriod}`) ?? null
+      const requestLevel = requestCells?.get(`${day}-${cellPeriod}`) ?? null
+      const overlayClass = overlayCell?.busy
+        ? ' grid-cell-avail-busy'
+        : overlayCell?.level === 'cannot'
+          ? ' grid-cell-avail-cannot'
+          : overlayCell?.level === 'avoid'
+            ? ' grid-cell-avail-avoid'
+            : overlayCell
+              ? ' grid-cell-avail-free'
+              : ''
+      const requestClass = requestLevel ? ` grid-cell-request-${requestLevel}` : ''
+      const overlayTitle = overlayCell?.busy
+        ? `Busy in ${overlayCell.busy.sectionLabel}: ${overlayCell.busy.subjectCode}`
+        : overlayCell?.level === 'cannot'
+          ? 'Requested: not available'
+          : overlayCell?.level === 'avoid'
+            ? 'Requested: prefers not'
+            : overlayCell
+              ? 'Free for this target'
+              : undefined
+
       cells.push(
         <td
           key={`empty-${index}`}
+          title={overlayTitle}
           className={`grid-empty${
             isFocused ? ' grid-cell-focused' : ''
-          }${freeSet?.has(`${day}-${cellPeriod}`) ? ' grid-cell-free' : ''}`}
+          }${freeSet?.has(`${day}-${cellPeriod}`) ? ' grid-cell-free' : ''}${overlayClass}${requestClass}`}
           data-cell-key={`${day}-${cellPeriod}`}
           data-empty-key={`${day}-${cellPeriod}`}
           onClick={(event) => {
@@ -118,13 +182,20 @@ function rowCells(
     } else {
       const kind = String(cell.slot.kind || 'l').toLowerCase()
       const coversFocus = focusedSlotId !== null && cell.slot.id === focusedSlotId
+      const overlayViolation = overlayLevelForSlot(cell.slot, availabilityOverlay)
+      const requestLevel = requestLevelForSlot(cell.slot, requestCells)
+      const violationClass = overlayViolation
+        ? ` grid-cell-violates-${overlayViolation}`
+        : ''
+      const requestClass = requestLevel ? ` grid-cell-request-${requestLevel}` : ''
+      const overrideMarker = Number(cell.slot.constraint_override) === 1
 
       cells.push(
         <td
           key={`slot-${cell.slot.id}`}
           rowSpan={cell.laneSpan > 1 ? cell.laneSpan : undefined}
           colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
-          className={`grid-slot grid-slot-${kind}${coversFocus ? ' grid-cell-focused' : ''}`}
+          className={`grid-slot grid-slot-${kind}${coversFocus ? ' grid-cell-focused' : ''}${violationClass}${requestClass}`}
           data-cell-key={`${day}-${cell.period}`}
           title={slotLines(cell.slot).join(' · ')}
           onClick={(event) => {
@@ -152,6 +223,20 @@ function rowCells(
           }
         >
           <CellContent slot={cell.slot} linesFor={linesFor} />
+          {overrideMarker && (
+            <span
+              className="grid-override-marker"
+              title="Scheduled against a requested unavailability"
+            >
+              ⚠
+            </span>
+          )}
+          {overlayViolation && (
+            <span
+              className={`grid-corner-marker grid-corner-${overlayViolation}`}
+              title="This lecture sits on a requested-unavailability period"
+            />
+          )}
           {onAddActivity && kind !== 'activity' && (
             <button
               type="button"
@@ -195,7 +280,9 @@ export default function TimetableGrid({
   onAddActivity,
   onCellContext,
   linesFor = slotLines,
-  freeSet = null
+  freeSet = null,
+  availabilityOverlay = null,
+  requestCells = null
 }) {
   const focusedAnchor = focused ? slotCellAt(grid, focused.day, focused.period) : null
   const focusedSlotId = focusedAnchor?.slot.id ?? null
@@ -253,7 +340,9 @@ export default function TimetableGrid({
                 onAddActivity,
                 onCellContext,
                 linesFor,
-                freeSet
+                freeSet,
+                availabilityOverlay,
+                requestCells
               )}
             </tr>
           ))

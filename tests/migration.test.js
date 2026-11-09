@@ -111,14 +111,33 @@ describe('migrations', () => {
     expect(schemaVersion(db)).toBe(0)
 
     const report = migrate(db)
-    expect(report.applied).toEqual([1])
+    expect(report.applied).toEqual([1, 2])
     expect(report.version).toBe(LATEST_VERSION)
     expect(report.backups).toEqual([]) // in-memory database: nothing to copy
 
     const columns = db.prepare('PRAGMA table_info(slots)').all().map((column) => column.name)
     expect(columns).toContain('batch_no')
     expect(columns).toContain('merge_group')
+    expect(columns).toContain('constraint_override')
     expect(columns).not.toContain('batch')
+
+    // The new availability tables, indexes and cleanup triggers exist too.
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all()
+      .map((row) => row.name)
+    expect(tables).toEqual(expect.arrayContaining(['availability', 'availability_notes']))
+    const triggers = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+      .all()
+      .map((row) => row.name)
+    expect(triggers).toEqual(
+      expect.arrayContaining([
+        'trg_teachers_availability',
+        'trg_venues_availability',
+        'trg_sections_availability'
+      ])
+    )
 
     const rows = db.prepare('SELECT * FROM slots ORDER BY id').all()
     expect(rows).toHaveLength(4)
@@ -170,20 +189,37 @@ describe('migrations', () => {
     })
     const report = migrate(target, { dbFile: file })
 
-    expect(report.backups).toHaveLength(1)
+    // One backup per pending migration: v1 (before round 2) and v2 (before
+    // availability). Both snapshot the database as it was at that step.
+    expect(report.backups).toHaveLength(2)
     expect(existsSync(report.backups[0])).toBe(true)
+    expect(existsSync(report.backups[1])).toBe(true)
     expect(report.backups[0]).toContain('timetable.backup-v1-')
+    expect(report.backups[1]).toContain('timetable.backup-v2-')
 
-    // The backup is still the OLD schema with its data.
+    // The first backup is still the OLD schema with its data.
     const backup = new Database(report.backups[0])
     const backupColumns = backup.prepare('PRAGMA table_info(slots)').all().map((c) => c.name)
     expect(backupColumns).toContain('batch')
     expect(backup.prepare('SELECT COUNT(*) AS count FROM teachers').get().count).toBe(1)
     backup.close()
 
-    // And the live file is the new schema.
+    // The second backup already has round-2 data but no availability table.
+    const secondBackup = new Database(report.backups[1])
+    expect(
+      secondBackup
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'availability'")
+        .get()
+    ).toBeUndefined()
+    secondBackup.close()
+
+    // And the live file is the new schema, with all master data kept.
     expect(schemaVersion(target)).toBe(LATEST_VERSION)
     expect(target.prepare('PRAGMA table_info(slots)').all().map((c) => c.name)).not.toContain('batch')
+    expect(target.prepare('SELECT COUNT(*) AS count FROM teachers').get().count).toBe(1)
+    expect(
+      target.prepare('SELECT COUNT(*) AS count FROM slots').get().count
+    ).toBe(0)
   })
 
   it('is idempotent: a second run does nothing', () => {

@@ -4,6 +4,7 @@ import { useActiveTimetable } from '../context/ActiveTimetableContext'
 import TimetableGrid from './TimetableGrid'
 import LegendTable from './LegendTable'
 import { buildGrid, viewLines } from '@shared/gridLayout'
+import { cellKey } from '@shared/availability'
 import { buildLegend } from '@shared/legend'
 
 /** 2026-07-14 -> 14-07-2026, the way the department sheet writes w.e.f. */
@@ -33,6 +34,8 @@ export default function GeneratedView({ mode }) {
   const [rows, setRows] = useState(null)
   const [freeSlots, setFreeSlots] = useState([])
   const [showFree, setShowFree] = useState(false)
+  const [showRequests, setShowRequests] = useState(false)
+  const [requestCells, setRequestCells] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -110,6 +113,31 @@ export default function GeneratedView({ mode }) {
       `${item.code} ${item.name ?? ''}`.toLowerCase().includes(needle)
     )
   }, [items, needle])
+
+  // Faculty view only: hatch the teacher's requested-unavailability cells on
+  // screen. PDF/Excel exports are produced by the main process and stay as is.
+  useEffect(() => {
+    let cancelled = false
+    if (!isFaculty || !showRequests || !activeId || !selectedId) {
+      setRequestCells(null)
+      return undefined
+    }
+    window.api.availability.matrix(activeId, 'teacher', selectedId).then((response) => {
+      if (cancelled) return
+      if (!response.ok) {
+        setRequestCells(null)
+        return
+      }
+      setRequestCells(
+        new Map(
+          response.data.map((cell) => [cellKey(cell.day, cell.period), cell.level])
+        )
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [isFaculty, showRequests, activeId, selectedId])
 
   const grid = useMemo(() => buildGrid(rows ?? []), [rows])
   const freeSet = useMemo(() => {
@@ -225,6 +253,16 @@ export default function GeneratedView({ mode }) {
                 {freeSlots.length} free (Mon–Fri, P1–P8)
               </span>
             )}
+            {isFaculty && (
+              <label className="editor-checkbox">
+                <input
+                  type="checkbox"
+                  checked={showRequests}
+                  onChange={(event) => setShowRequests(event.target.checked)}
+                />
+                <span>Show requested unavailability</span>
+              </label>
+            )}
             {loading && <span className="muted small">Loading…</span>}
           </div>
 
@@ -239,6 +277,7 @@ export default function GeneratedView({ mode }) {
               grid={grid}
               linesFor={(slot) => viewLines(slot, mode)}
               freeSet={freeSet}
+              requestCells={isFaculty && showRequests ? requestCells : null}
               onActivate={onActivate}
             />
           )}

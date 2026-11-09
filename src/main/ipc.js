@@ -3,6 +3,16 @@ import { getDb } from './db'
 import timetableCore from '../../timetable-core.js'
 import { toEnvelope } from './ipcEnvelope.js'
 import {
+  backupInfo,
+  backupNow,
+  inspectRestore,
+  openBackupsFolder,
+  pickRestoreFile,
+  restoreBackup
+} from './backupApi.js'
+import { setEditorDirty } from './closeState.js'
+import { logError } from './logger.js'
+import {
   fail,
   normalizeSubjectCode,
   requireId,
@@ -19,6 +29,13 @@ import {
   slotsBusy,
   slotsDelete
 } from './slotsApi.js'
+import {
+  availabilityCopy,
+  availabilityGet,
+  availabilityMatrix,
+  availabilitySave,
+  availabilitySummary
+} from './availabilityApi.js'
 import {
   chooseFolder,
   exportCombined,
@@ -237,6 +254,16 @@ export function registerIpcHandlers() {
     return { id }
   })
 
+  handle('timetables:duplicate', (db, timetableId, newTitle) => {
+    const id = requireId(timetableId, 'Timetable')
+    const title = requireText(newTitle, 'New timetable title')
+    return timetableCore.duplicateTimetable(db, id, title)
+  })
+
+  handle('timetables:overview', (db, timetableId) =>
+    timetableCore.dashboardOverview(db, requireId(timetableId, 'Timetable'))
+  )
+
   // ---------------- Sections ----------------
   handle('sections:list', (db, timetableId) => {
     const id = requireId(timetableId, 'Timetable')
@@ -393,6 +420,28 @@ export function registerIpcHandlers() {
   handle('slots:leave-group', slotsLeaveGroup)
   handle('slots:busy', slotsBusy)
   handle('slots:delete', slotsDelete)
+
+  // ---------------- Availability requests ----------------
+  handle('availability:get', availabilityGet)
+  handle('availability:save', availabilitySave)
+  handle('availability:matrix', availabilityMatrix)
+  handle('availability:summary', availabilitySummary)
+  handle('availability:copy', availabilityCopy)
+
+  // ---------------- Backup and restore ----------------
+  handle('backup:info', () => backupInfo())
+  handle('backup:now', () => backupNow())
+  handle('backup:pick-restore', () => pickRestoreFile())
+  handle('backup:inspect', (_db, path) => inspectRestore(path))
+  handle('backup:restore', (_db, path) => restoreBackup(path))
+  handle('backup:open-folder', () => openBackupsFolder())
+
+  // The close guard is a one-way flag; the window's close handler reads it.
+  ipcMain.on('app:editor-dirty', (_event, dirty) => setEditorDirty(dirty))
+  ipcMain.handle('logs:renderer', (_event, payload = {}) => {
+    logError('renderer', payload.message || 'Renderer error', payload)
+    return { ok: true, data: true }
+  })
 
   handle('timetable:validate', (db, timetableId) => {
     const id = requireId(timetableId, 'Timetable')

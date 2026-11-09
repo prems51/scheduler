@@ -132,8 +132,8 @@ export function slotsListBySection(db, sectionId) {
   return timetableCore.sectionSlots(db, requireId(sectionId, 'Section'))
 }
 
-/** slots:save */
-export function slotsSave(db, slot = {}, teacherIds = [], slotId = null) {
+/** slots:save — `problems` on success are warnings only (soft requests). */
+export function slotsSave(db, slot = {}, teacherIds = [], slotId = null, options = {}) {
   const normalized = normalizeSlot(slot)
   // Activities never carry teachers, whatever the editor sent.
   const teachers = normalized.kind === 'ACTIVITY' ? [] : normalizeTeacherIds(teacherIds)
@@ -142,26 +142,29 @@ export function slotsSave(db, slot = {}, teacherIds = [], slotId = null) {
     db,
     normalized,
     teachers,
-    slotId === null || slotId === undefined ? null : requireId(slotId, 'Slot')
+    slotId === null || slotId === undefined ? null : requireId(slotId, 'Slot'),
+    { overrideConstraints: Boolean(options?.overrideConstraints) }
   )
 
   if (!result.ok) {
     fitProblems(result)
   }
-  return db.prepare('SELECT * FROM slots WHERE id = ?').get(result.id)
+  return {
+    ...db.prepare('SELECT * FROM slots WHERE id = ?').get(result.id),
+    problems: result.problems ?? []
+  }
 }
 
-/** slots:check */
+/** slots:check — clashes plus availability problems (with level/overridable). */
 export function slotsCheck(db, slot = {}, teacherIds = [], slotId = null) {
   const normalized = normalizeSlot(slot)
   const teachers = normalized.kind === 'ACTIVITY' ? [] : normalizeTeacherIds(teacherIds)
   validateSlotRefs(db, normalized, teachers)
-  return timetableCore.checkConflicts(
-    db,
-    normalized,
-    teachers,
+  const ignore =
     slotId === null || slotId === undefined ? null : requireId(slotId, 'Slot')
-  )
+  const clashes = timetableCore.checkConflicts(db, normalized, teachers, ignore)
+  const constraints = timetableCore.checkConstraints(db, normalized, teachers)
+  return [...clashes, ...constraints]
 }
 
 /** slots:merge-candidates — the conflicts the editor offers as merges. */
@@ -190,7 +193,7 @@ export function slotsJoinMerge(db, slot = {}, candidateSlotId) {
 }
 
 /** slots:leave-group — detach this section from the merged lecture in one save. */
-export function slotsLeaveGroup(db, slotId, slot = null, teacherIds = null) {
+export function slotsLeaveGroup(db, slotId, slot = null, teacherIds = null, options = {}) {
   const id = requireId(slotId, 'Slot')
   const row = db.prepare('SELECT * FROM slots WHERE id = ?').get(id)
   if (!row) fail('That slot no longer exists.')
@@ -210,7 +213,8 @@ export function slotsLeaveGroup(db, slotId, slot = null, teacherIds = null) {
     db,
     { ...payload, detach: true, merge_group: null },
     payload.kind === 'ACTIVITY' ? [] : teachers,
-    id
+    id,
+    { overrideConstraints: Boolean(options?.overrideConstraints) }
   )
   if (!result.ok) {
     fail(result.problems[0]?.message || 'This section cannot leave the merged lecture yet.', {
@@ -248,7 +252,10 @@ export function slotsBusy(
     ignoreSlotId === null || ignoreSlotId === undefined ? null : requireId(ignoreSlotId, 'Slot')
   const mergeGroup = optionalText(mergeGroupId)
 
-  return timetableCore.busyResources(db, timetable, dayNumber, start, length, ignore, mergeGroup)
+  return {
+    ...timetableCore.busyResources(db, timetable, dayNumber, start, length, ignore, mergeGroup),
+    constraints: timetableCore.busyConstraintLevels(db, timetable, dayNumber, start, length)
+  }
 }
 
 /** slots:delete — removes this section's slot only; the merged rest stays. */
@@ -260,7 +267,8 @@ export function slotsDelete(db, slotId) {
 
 function fitProblems(result) {
   const problems = result.problems || []
-  fail(problems[0]?.message || 'This slot conflicts with another class.', { problems })
+  const blocking = timetableCore.blockingProblems(problems)
+  fail(blocking[0]?.message || 'This slot conflicts with another class.', { problems })
 }
 
 import timetableCore from '../../timetable-core.js'

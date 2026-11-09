@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS slots (
   venue_id        INTEGER REFERENCES venues(id),
   label           TEXT,                -- for ACTIVITY: 'SUPER - 30', 'Sports'
   merge_group     TEXT,                -- same value = one merged lecture across several sections
+  constraint_override INTEGER NOT NULL DEFAULT 0,  -- 1 = saved after ignoring a requested unavailability
   CHECK (kind = 'ACTIVITY' OR subject_id IS NOT NULL),
   CHECK (start_period + span - 1 <= 8)
 );
@@ -93,3 +94,47 @@ CREATE INDEX IF NOT EXISTS idx_slots_day_period   ON slots (day, start_period);
 CREATE INDEX IF NOT EXISTS idx_slots_section      ON slots (section_id);
 CREATE INDEX IF NOT EXISTS idx_slots_venue        ON slots (venue_id);
 CREATE INDEX IF NOT EXISTS idx_slots_merge_group  ON slots (merge_group);
+
+-- ---------- Availability requests (one row per blocked cell) ----------
+-- 'cannot' is hard (not available, the editor can override it explicitly),
+-- 'avoid' is soft (prefers not, never blocks). target_id is polymorphic, so
+-- the triggers below clean it up when a teacher/venue/section is deleted.
+CREATE TABLE IF NOT EXISTS availability (
+  timetable_id INTEGER NOT NULL REFERENCES timetables(id) ON DELETE CASCADE,
+  target_type  TEXT NOT NULL CHECK (target_type IN ('teacher','venue','section')),
+  target_id    INTEGER NOT NULL,
+  day          INTEGER NOT NULL CHECK (day BETWEEN 1 AND 6),
+  period       INTEGER NOT NULL CHECK (period BETWEEN 1 AND 8),
+  level        TEXT NOT NULL CHECK (level IN ('cannot','avoid')),
+  PRIMARY KEY (timetable_id, target_type, target_id, day, period)
+);
+
+CREATE TABLE IF NOT EXISTS availability_notes (
+  timetable_id INTEGER NOT NULL REFERENCES timetables(id) ON DELETE CASCADE,
+  target_type  TEXT NOT NULL CHECK (target_type IN ('teacher','venue','section')),
+  target_id    INTEGER NOT NULL,
+  note         TEXT NOT NULL,
+  PRIMARY KEY (timetable_id, target_type, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_availability_target ON availability (timetable_id, target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_availability_cell   ON availability (timetable_id, day, period);
+CREATE INDEX IF NOT EXISTS idx_availability_notes_target ON availability_notes (timetable_id, target_type, target_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_teachers_availability AFTER DELETE ON teachers
+BEGIN
+  DELETE FROM availability WHERE target_type = 'teacher' AND target_id = OLD.id;
+  DELETE FROM availability_notes WHERE target_type = 'teacher' AND target_id = OLD.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_venues_availability AFTER DELETE ON venues
+BEGIN
+  DELETE FROM availability WHERE target_type = 'venue' AND target_id = OLD.id;
+  DELETE FROM availability_notes WHERE target_type = 'venue' AND target_id = OLD.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_sections_availability AFTER DELETE ON sections
+BEGIN
+  DELETE FROM availability WHERE target_type = 'section' AND target_id = OLD.id;
+  DELETE FROM availability_notes WHERE target_type = 'section' AND target_id = OLD.id;
+END;

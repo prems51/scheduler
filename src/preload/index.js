@@ -33,7 +33,26 @@ const api = {
     list: () => invoke('timetables:list'),
     save: (timetable) => invoke('timetables:save', timetable),
     delete: (id) => invoke('timetables:delete', id),
-    validate: (id) => invoke('timetable:validate', id)
+    validate: (id) => invoke('timetable:validate', id),
+    duplicate: (id, title) => invoke('timetables:duplicate', id, title),
+    overview: (id) => invoke('timetables:overview', id)
+  },
+
+  app: {
+    setEditorDirty: (dirty) => ipcRenderer.send('app:editor-dirty', Boolean(dirty))
+  },
+
+  backups: {
+    info: () => invoke('backup:info'),
+    now: () => invoke('backup:now'),
+    pickRestore: () => invoke('backup:pick-restore'),
+    inspect: (path) => invoke('backup:inspect', path),
+    restore: (path) => invoke('backup:restore', path),
+    openFolder: () => invoke('backup:open-folder')
+  },
+
+  logs: {
+    error: (payload) => invoke('logs:renderer', payload)
   },
 
   sections: {
@@ -51,18 +70,31 @@ const api = {
 
   slots: {
     listBySection: (sectionId) => invoke('slots:listBySection', sectionId),
-    save: (slot, teacherIds = [], slotId = null) =>
-      invoke('slots:save', slot, teacherIds, slotId),
-    check: (slot, teacherIds = [], slotId = null) =>
-      invoke('slots:check', slot, teacherIds, slotId),
+    save: (slot, teacherIds = [], slotId = null, options = {}) =>
+      invoke('slots:save', slot, teacherIds, slotId, options),
+    check: (slot, teacherIds = [], slotId = null, options = {}) =>
+      invoke('slots:check', slot, teacherIds, slotId, options),
     busy: (timetableId, day, startPeriod, span, ignoreSlotId = null, mergeGroup = null) =>
       invoke('slots:busy', timetableId, day, startPeriod, span, ignoreSlotId, mergeGroup),
     mergeCandidates: (slot, teacherIds = [], slotId = null) =>
       invoke('slots:merge-candidates', slot, teacherIds, slotId),
     joinMerge: (slot, candidateSlotId) => invoke('slots:join-merge', slot, candidateSlotId),
-    leaveGroup: (slotId, slot = null, teacherIds = null) =>
-      invoke('slots:leave-group', slotId, slot, teacherIds),
+    leaveGroup: (slotId, slot = null, teacherIds = null, options = {}) =>
+      invoke('slots:leave-group', slotId, slot, teacherIds, options),
     delete: (id) => invoke('slots:delete', id)
+  },
+
+  availability: {
+    get: (timetableId, targetType, targetId) =>
+      invoke('availability:get', timetableId, targetType, targetId),
+    save: (timetableId, targetType, targetId, cells = [], note = '') =>
+      invoke('availability:save', timetableId, targetType, targetId, cells, note),
+    matrix: (timetableId, targetType, targetId) =>
+      invoke('availability:matrix', timetableId, targetType, targetId),
+    summary: (timetableId, targetType) =>
+      invoke('availability:summary', timetableId, targetType),
+    copy: (timetableId, fromType, fromId, toType, toId) =>
+      invoke('availability:copy', timetableId, fromType, fromId, toType, toId)
   },
 
   views: {

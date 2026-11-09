@@ -55,7 +55,8 @@ describe('slot snapshot', () => {
         merge_group: null
       },
       teacherIds: [11, 12],
-      code: 'BCS501'
+      code: 'BCS501',
+      constraintOverride: 0
     })
   })
 

@@ -55,6 +55,7 @@ export default function Export() {
   const [progress, setProgress] = useState(null)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+  const [exportNotice, setExportNotice] = useState(0)
 
   const choice = KIND_CHOICES.find((item) => item.value === what)
 
@@ -171,11 +172,24 @@ export default function Export() {
     )
   }
 
-  async function run() {
+  async function run(force = false) {
     if (running) return
-    setRunning(true)
     setError('')
     setResult(null)
+
+    // A non-blocking notice before exporting: clashes and unoverridden hard
+    // requests are worth a second look, but never stop her from exporting.
+    if (!force && activeId) {
+      const check = await window.api.timetables.validate(activeId)
+      const issues = check.ok ? Number(check.data?.counts?.issues ?? 0) : 0
+      if (issues > 0) {
+        setExportNotice(issues)
+        return
+      }
+    }
+    setExportNotice(0)
+
+    setRunning(true)
     try {
       const outcome = which === 'all' ? await runAll() : await runOne()
       if (outcome) setResult(outcome)
@@ -229,6 +243,30 @@ export default function Export() {
         <p className="form-error export-error" role="alert" style={{ whiteSpace: 'pre-line' }}>
           {error}
         </p>
+      )}
+
+      {exportNotice > 0 && (
+        <section className="export-notice" role="alert" aria-label="Export issues">
+          <strong>
+            {exportNotice} issue{exportNotice === 1 ? '' : 's'} found. Export anyway?
+          </strong>
+          <p className="muted small">
+            This timetable has clashes or availability requests that were not overridden. The
+            files are written exactly as the timetable is now.
+          </p>
+          <div className="export-notice-actions">
+            <button
+              type="button"
+              className="button button-secondary button-small"
+              onClick={() => setExportNotice(0)}
+            >
+              Cancel
+            </button>
+            <button type="button" className="button button-small" onClick={() => run(true)}>
+              Export anyway
+            </button>
+          </div>
+        </section>
       )}
 
       <section className="export-card" aria-label="Timetable export">
@@ -388,7 +426,12 @@ export default function Export() {
         </RadioRow>
 
         <div className="export-runrow">
-          <button type="button" className="button button-primary" onClick={run} disabled={running}>
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() => run()}
+            disabled={running}
+          >
             {running ? 'Exporting…' : 'Run'}
           </button>
           {progress && (

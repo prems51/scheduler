@@ -181,6 +181,14 @@ export default function MasterData() {
 
       {loadError && <p className="form-error">{loadError}</p>}
 
+      {!loading && !searching && data[activeTab].length === 0 && (
+        <div className="empty-state empty-state-inline">
+          <p>
+            No {active.singular}s yet. Type in the blank row below to add the first one.
+          </p>
+        </div>
+      )}
+
       {loading ? (
         <p className="muted">Loading…</p>
       ) : (

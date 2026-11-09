@@ -35,7 +35,8 @@ export default function SlotEditor({
   onAddActivityHere,
   onClose,
   onSaved,
-  onRequestDelete
+  onRequestDelete,
+  onDirtyChange
 }) {
   const editing = Boolean(slot?.id)
   const startPeriod = slot?.start_period ?? period
@@ -67,9 +68,51 @@ export default function SlotEditor({
   const [problems, setProblems] = useState([])
   const [checking, setChecking] = useState(false)
   const [busyResources, setBusyResources] = useState({ teachers: [], venues: [] })
+  const [overrideConstraints, setOverrideConstraints] = useState(false)
 
   const rootRef = useRef(null)
   const teacherPickerRef = useRef(null)
+  const initialSignatureRef = useRef(null)
+
+  // The initial signature is captured before any edit. Teacher order and the
+  // search box are not part of the data, so they are deliberately left out.
+  if (initialSignatureRef.current === null) {
+    initialSignatureRef.current = JSON.stringify({
+      kind: slot?.kind ?? 'L',
+      subjectId: slot?.subject_id ?? null,
+      teacherIds: [...(slot?.teacher_ids ?? [])].sort((a, b) => a - b),
+      batchNo: slot?.batch_no ?? null,
+      span: slot?.span ?? 1,
+      venueId: initialVenueState(slot, section, venues, slot?.kind ?? 'L').id,
+      label: slot?.label ?? '',
+      parallel: Boolean(slot?.elective_group),
+      group: slot?.elective_group ?? '',
+      mergeGroup: slot?.merge_group ?? null,
+      mergeWith: null,
+      override: false
+    })
+  }
+
+  const dirty =
+    JSON.stringify({
+      kind,
+      subjectId,
+      teacherIds: [...teacherIds].sort((a, b) => a - b),
+      batchNo,
+      span,
+      venueId: venue.id,
+      label,
+      parallel,
+      group,
+      mergeGroup,
+      mergeWith,
+      override: overrideConstraints
+    }) !== initialSignatureRef.current
+
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
 
   const spanLimit =
     startPeriod <= LUNCH_AFTER ? LUNCH_AFTER + 1 - startPeriod : PERIODS.length + 1 - startPeriod
@@ -128,6 +171,37 @@ export default function SlotEditor({
     [busyResources]
   )
 
+  const constraintTeacherMap = useMemo(
+    () =>
+      new Map(
+        (busyResources.constraints?.teachers ?? []).map((entry) => [entry.id, entry.level])
+      ),
+    [busyResources]
+  )
+
+  const constraintVenueMap = useMemo(
+    () =>
+      new Map(
+        (busyResources.constraints?.venues ?? []).map((entry) => [entry.id, entry.level])
+      ),
+    [busyResources]
+  )
+
+  const hardConstraints = useMemo(
+    () => problems.filter((problem) => problem.type === 'constraint' && problem.overridable),
+    [problems]
+  )
+
+  // Warnings never block; a hard request is only blocking when the professor
+  // has not ticked "Schedule anyway".
+  const blockingProblems = useMemo(
+    () =>
+      problems.filter(
+        (problem) => problem.level !== 'warning' && !(problem.overridable && overrideConstraints)
+      ),
+    [problems, overrideConstraints]
+  )
+
   const { offers: mergeOffers, blockedNote: mergeBlockedNote } = useMemo(
     () => (mergeGroup ? { offers: [], blockedNote: '' } : mergeOfferState(problems)),
     [problems, mergeGroup]
@@ -155,6 +229,12 @@ export default function SlotEditor({
   function busyText(entry) {
     if (!entry) return ''
     return `busy in ${entry.section}${entry.mergeable ? ', can be merged' : ''}`
+  }
+
+  function constraintText(level) {
+    if (level === 'cannot') return 'unavailable (requested)'
+    if (level === 'avoid') return 'prefers not'
+    return ''
   }
 
   useEffect(() => {
@@ -364,7 +444,8 @@ export default function SlotEditor({
           id: slot.id,
           payload,
           teacherIds: finalTeacherIds,
-          code: kind === 'ACTIVITY' ? label.trim() : subject?.subject_code ?? ''
+          code: kind === 'ACTIVITY' ? label.trim() : subject?.subject_code ?? '',
+          constraintOverride: 0
         }
       )
     } finally {
@@ -388,7 +469,7 @@ export default function SlotEditor({
       return
     }
 
-    if (problems.length > 0 || checking) return
+    if (blockingProblems.length > 0 || checking) return
 
     const payload = buildPayload()
     const finalTeacherIds = kind === 'ACTIVITY' ? [] : teacherIds
@@ -397,7 +478,12 @@ export default function SlotEditor({
     setSaving(true)
     setError('')
     try {
-      const response = await window.api.slots.save(payload, finalTeacherIds, slot?.id ?? null)
+      const response = await window.api.slots.save(
+        payload,
+        finalTeacherIds,
+        slot?.id ?? null,
+        { overrideConstraints }
+      )
       if (!response.ok) {
         setError(response.error)
         if (response.problems) setProblems(response.problems)
@@ -407,7 +493,8 @@ export default function SlotEditor({
         id: response.data.id,
         payload: { ...payload, merge_group: response.data.merge_group ?? null },
         teacherIds: finalTeacherIds,
-        code: kind === 'ACTIVITY' ? label.trim() : subject?.subject_code ?? ''
+        code: kind === 'ACTIVITY' ? label.trim() : subject?.subject_code ?? '',
+        constraintOverride: Number(response.data.constraint_override ?? 0)
       })
     } catch (saveFailure) {
       setError(saveFailure.message)
@@ -456,10 +543,12 @@ export default function SlotEditor({
         <option value="">{kind === 'ACTIVITY' ? 'None' : 'No venue'}</option>
         {venueOptions.map((venue) => {
           const busy = busyVenueMap.get(venue.id)
+          const constraintLevel = constraintVenueMap.get(venue.id)
           return (
             <option key={venue.id} value={venue.id}>
               {venue.code}
               {venue.name ? ` — ${venue.name}` : ''} ({venue.kind})
+              {constraintLevel ? ` — ${constraintText(constraintLevel)}` : ''}
               {busy ? ` — ${busyText(busy)}` : ''}
             </option>
           )
@@ -619,9 +708,15 @@ export default function SlotEditor({
                 {teacherIds.map((teacherId) => {
                   const teacher = teachersById[teacherId]
                   const busy = busyTeacherMap.get(teacherId)
+                  const constraintLevel = constraintTeacherMap.get(teacherId)
                   return (
                     <span key={teacherId} className="chip" title={teacher?.name}>
                       {teacher?.code ?? teacherId}
+                      {constraintLevel ? (
+                        <span className={`chip-constraint chip-constraint-${constraintLevel}`}>
+                          · {constraintText(constraintLevel)}
+                        </span>
+                      ) : null}
                       {busy ? <span className="chip-busy">· {busyText(busy)}</span> : null}
                       <button
                         type="button"
@@ -653,6 +748,7 @@ export default function SlotEditor({
                     {visibleTeachers.map((teacher) => {
                       const selected = teacherIds.includes(teacher.id)
                       const busy = busyTeacherMap.get(teacher.id)
+                      const constraintLevel = constraintTeacherMap.get(teacher.id)
                       return (
                         <button
                           key={teacher.id}
@@ -661,7 +757,8 @@ export default function SlotEditor({
                             [
                               'teacher-option',
                               selected ? 'is-selected' : '',
-                              busy ? 'teacher-option-is-busy' : ''
+                              busy ? 'teacher-option-is-busy' : '',
+                              constraintLevel ? `teacher-option-constraint-${constraintLevel}` : ''
                             ]
                               .filter(Boolean)
                               .join(' ')
@@ -672,10 +769,21 @@ export default function SlotEditor({
                             setTeacherFilter('')
                           }}
                           aria-pressed={selected}
-                          title={busy ? busy.reason : undefined}
+                          title={
+                            [busy ? busy.reason : null, constraintLevel ? constraintText(constraintLevel) : null]
+                              .filter(Boolean)
+                              .join(' · ') || undefined
+                          }
                         >
                           <span className="teacher-option-code">{teacher.code}</span>
                           <span className="teacher-option-name">{teacher.name}</span>
+                          {constraintLevel && (
+                            <span
+                              className={`teacher-option-constraint teacher-option-constraint-${constraintLevel}`}
+                            >
+                              {constraintText(constraintLevel)}
+                            </span>
+                          )}
                           {busy && <span className="teacher-option-busy">{busyText(busy)}</span>}
                         </button>
                       )
@@ -741,6 +849,18 @@ export default function SlotEditor({
       )}
 
       {problems.length > 0 && <ProblemList problems={problems} className="slot-editor-problems" />}
+
+      {hardConstraints.length > 0 && (
+        <label className="editor-checkbox constraint-override">
+          <input
+            type="checkbox"
+            checked={overrideConstraints}
+            onChange={(event) => setOverrideConstraints(event.target.checked)}
+          />
+          <span>Schedule anyway (ignore this request)</span>
+        </label>
+      )}
+
       {checking && <p className="muted small slot-editor-checking">Checking conflicts…</p>}
 
       {error && <p className="form-error slot-editor-error">{error}</p>}
@@ -769,8 +889,12 @@ export default function SlotEditor({
           type="button"
           className="button button-small"
           onClick={save}
-          disabled={saving || checking || problems.length > 0}
-          title={problems.length > 0 ? 'Fix the conflicts before saving' : undefined}
+          disabled={saving || checking || blockingProblems.length > 0}
+          title={
+            blockingProblems.length > 0
+              ? 'Fix the conflicts before saving, or tick "Schedule anyway"'
+              : undefined
+          }
         >
           {saving ? 'Saving…' : 'Save'}
         </button>

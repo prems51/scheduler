@@ -31,6 +31,12 @@ const ICONS = {
       <path d="M2.4 8h11.2" />
       <path d="M4.4 3.6 8 8l-3.6 4.4M11.6 3.6 8 8l3.6 4.4" />
     </>
+  ),
+  constraint: (
+    <>
+      <circle cx="8" cy="8" r="5.4" />
+      <path d="M8 4.8v3.6l2.4 1.4" />
+    </>
   )
 }
 
@@ -61,7 +67,16 @@ export default function ProblemList({ problems = [], className = '' }) {
   return (
     <ul className={`problem-list ${className}`.trim()}>
       {problems.map((problem, index) => (
-        <li key={`${problem.type}-${index}`} className="problem-item">
+        <li
+          key={`${problem.type}-${index}`}
+          className={`problem-item${
+            problem.level === 'warning'
+              ? ' problem-item-warning'
+              : problem.level === 'error'
+                ? ' problem-item-error'
+                : ''
+          }`}
+        >
           <ProblemIcon type={problem.type} />
           <span className="problem-message">{problem.message}</span>
         </li>

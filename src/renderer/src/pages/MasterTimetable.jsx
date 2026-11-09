@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useActiveTimetable } from '../context/ActiveTimetableContext'
 import TimetableGrid from '../components/TimetableGrid'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Toast from '../components/Toast'
 import LegendTable from '../components/LegendTable'
+import SectionPicker from '../components/SectionPicker'
 import SlotEditor from './masterTimetable/SlotEditor'
 import ValidationPanel from './masterTimetable/ValidationPanel'
 import { groupSectionsBySemester } from '../lib/sectionGroups'
@@ -47,6 +48,7 @@ function formatDate(value) {
 export default function MasterTimetable() {
   const { activeTimetable, activeId } = useActiveTimetable()
   const location = useLocation()
+  const navigate = useNavigate()
 
   // A click inside a generated view lands here with { sectionId, day, period }.
   const jump = useMemo(() => {
@@ -83,6 +85,9 @@ export default function MasterTimetable() {
   const [validating, setValidating] = useState(false)
   const [problemsOpen, setProblemsOpen] = useState(false)
   const [toast, setToast] = useState(null)
+  const [overlayType, setOverlayType] = useState('')
+  const [overlayId, setOverlayId] = useState(null)
+  const [overlayMatrix, setOverlayMatrix] = useState(null)
 
   const gridRef = useRef(null)
   const sheetRef = useRef(null)
@@ -185,6 +190,14 @@ export default function MasterTimetable() {
     setToast({ id: Date.now(), tone, title, messages, timeout })
   }, [])
 
+  // The main process asks before closing the window while the class editor has
+  // unsaved typing. Clearing the flag on unmount avoids a stale prompt.
+  const handleEditorDirty = useCallback((dirty) => {
+    window.api?.app?.setEditorDirty(dirty)
+  }, [])
+
+  useEffect(() => () => window.api?.app?.setEditorDirty(false), [])
+
   useEffect(() => {
     let cancelled = false
 
@@ -233,8 +246,43 @@ export default function MasterTimetable() {
   const legend = useMemo(() => buildLegend(slots, { teachers }), [slots, teachers])
 
   const conflictCount = validation
-    ? validation.slots.filter((entry) => entry.section_id === selectedSectionId).length
+    ? validation.clashes.filter((entry) => entry.section_id === selectedSectionId).length +
+      validation.violations.filter((entry) => entry.section_id === selectedSectionId).length
     : null
+
+  // Availability overlay: only the chosen target's matrix, never part of an
+  // export. It is refreshed when slots change so the tint stays honest.
+  useEffect(() => {
+    let cancelled = false
+    if (!activeId || !overlayType || !overlayId) {
+      setOverlayMatrix(null)
+      return undefined
+    }
+    window.api.availability.matrix(activeId, overlayType, overlayId).then((response) => {
+      if (!cancelled && response.ok) setOverlayMatrix(response.data)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeId, overlayType, overlayId, slots])
+
+  const availabilityOverlay = useMemo(() => {
+    if (!overlayType || !overlayId || !overlayMatrix) return null
+    return {
+      type: overlayType,
+      id: overlayId,
+      matrix: new Map(overlayMatrix.map((cell) => [`${cell.day}-${cell.period}`, cell]))
+    }
+  }, [overlayType, overlayId, overlayMatrix])
+
+  const overlayChoices =
+    overlayType === 'teacher' ? teachers : overlayType === 'venue' ? venues : sections
+
+  function chooseOverlayType(value) {
+    setOverlayType(value)
+    setOverlayId(null)
+    setOverlayMatrix(null)
+  }
 
   const clipboardHint = clipboard
     ? `Copied ${clipboard.code || 'class'} (${DAY_LABELS[clipboard.payload.day]} P${
@@ -404,12 +452,10 @@ export default function MasterTimetable() {
     try {
       const check = await window.api.slots.check(payload, clipboard.teacherIds, null)
       const problems = check.ok ? check.data : [{ type: 'section', message: check.error }]
-      if (problems.length > 0) {
-        showToast(
-          'error',
-          'Cannot paste here',
-          problems.map((problem) => problem.message)
-        )
+      // Pasting never overrides a request: only warnings (prefer not) pass.
+      const blocking = problems.filter((problem) => problem.level !== 'warning')
+      if (blocking.length > 0) {
+        showToast('error', 'Cannot paste here', blocking.map((problem) => problem.message))
         return
       }
 
@@ -457,7 +503,8 @@ export default function MasterTimetable() {
         const response = await window.api.slots.save(
           restoring.payload,
           restoring.teacherIds,
-          recreate ? null : restoring.id
+          recreate ? null : restoring.id,
+          { overrideConstraints: Number(restoring.constraintOverride ?? 0) === 1 }
         )
         if (!response.ok) {
           throw new Error(response.problems?.[0]?.message || response.error)
@@ -630,6 +677,56 @@ export default function MasterTimetable() {
     <div>
       <h1>Master Timetable</h1>
 
+      {activeTimetable && (
+        <div className="availability-overlay-bar">
+          <span className="editor-label">Show availability of:</span>
+          <select
+            className="input input-small"
+            value={overlayType}
+            onChange={(event) => chooseOverlayType(event.target.value)}
+            aria-label="Availability overlay target type"
+          >
+            <option value="">None</option>
+            <option value="teacher">Teacher</option>
+            <option value="venue">Venue</option>
+            <option value="section">Section</option>
+          </select>
+          {overlayType === 'section' ? (
+            <SectionPicker
+              sections={sections}
+              value={overlayId}
+              onChange={setOverlayId}
+              ariaLabel="Availability overlay section"
+              placeholder="Choose a section…"
+              className="input input-small"
+            />
+          ) : (
+            overlayType && (
+              <select
+                className="input input-small"
+                value={overlayId ?? ''}
+                onChange={(event) =>
+                  setOverlayId(event.target.value === '' ? null : Number(event.target.value))
+                }
+                aria-label="Availability overlay target"
+              >
+                <option value="">Choose…</option>
+                {overlayChoices.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {overlayType === 'teacher' ? `${entry.code} · ${entry.name}` : entry.code}
+                  </option>
+                ))}
+              </select>
+            )
+          )}
+          {availabilityOverlay && (
+            <span className="availability-overlay-legend muted small">
+              Empty cells: green free · red cannot · amber prefer not · grey busy elsewhere
+            </span>
+          )}
+        </div>
+      )}
+
       {error && <p className="form-error">{error}</p>}
 
       {!activeTimetable ? (
@@ -693,6 +790,16 @@ export default function MasterTimetable() {
               report={validation}
               busy={validating || conflictCount === null}
               onClose={() => setProblemsOpen(false)}
+              onGoToSlot={(entry) => {
+                setProblemsOpen(false)
+                navigate('/master-timetable', {
+                  state: {
+                    sectionId: entry.section_id,
+                    day: entry.day,
+                    period: entry.start_period
+                  }
+                })
+              }}
             />
           )}
 
@@ -741,6 +848,7 @@ export default function MasterTimetable() {
                   onActivate={openEditor}
                   onAddActivity={openActivityEditor}
                   onCellContext={openCellContextMenu}
+                  availabilityOverlay={availabilityOverlay}
                 />
               </div>
 
@@ -782,6 +890,7 @@ export default function MasterTimetable() {
                   onClose={closeEditor}
                   onSaved={handleEditorSaved}
                   onRequestDelete={requestDelete}
+                  onDirtyChange={handleEditorDirty}
                 />
               )}
             </section>

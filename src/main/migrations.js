@@ -12,7 +12,7 @@
 
 import { basename, dirname, extname, join } from 'node:path'
 
-export const LATEST_VERSION = 1
+export const LATEST_VERSION = 2
 
 /** Table reconstruction shared by the migration and readable on its own. */
 const SLOTS_TABLE_V1 = `
@@ -32,6 +32,56 @@ CREATE TABLE slots_v1 (
   CHECK (kind = 'ACTIVITY' OR subject_id IS NOT NULL),
   CHECK (start_period + span - 1 <= 8)
 )`
+
+/**
+ * Tables, indexes and cleanup triggers for availability requests. Shared by the
+ * v2 migration; schema.sql carries the same final shape for fresh installs.
+ *
+ * Availability belongs to one timetable (one term), so duplicateTimetable()
+ * copies availability and availability_notes to the new timetable_id and
+ * remaps section targets to the new section ids.
+ */
+export const AVAILABILITY_SQL = `
+CREATE TABLE IF NOT EXISTS availability (
+  timetable_id INTEGER NOT NULL REFERENCES timetables(id) ON DELETE CASCADE,
+  target_type  TEXT NOT NULL CHECK (target_type IN ('teacher','venue','section')),
+  target_id    INTEGER NOT NULL,
+  day          INTEGER NOT NULL CHECK (day BETWEEN 1 AND 6),
+  period       INTEGER NOT NULL CHECK (period BETWEEN 1 AND 8),
+  level        TEXT NOT NULL CHECK (level IN ('cannot','avoid')),
+  PRIMARY KEY (timetable_id, target_type, target_id, day, period)
+);
+
+CREATE TABLE IF NOT EXISTS availability_notes (
+  timetable_id INTEGER NOT NULL REFERENCES timetables(id) ON DELETE CASCADE,
+  target_type  TEXT NOT NULL CHECK (target_type IN ('teacher','venue','section')),
+  target_id    INTEGER NOT NULL,
+  note         TEXT NOT NULL,
+  PRIMARY KEY (timetable_id, target_type, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_availability_target ON availability (timetable_id, target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_availability_cell   ON availability (timetable_id, day, period);
+CREATE INDEX IF NOT EXISTS idx_availability_notes_target ON availability_notes (timetable_id, target_type, target_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_teachers_availability AFTER DELETE ON teachers
+BEGIN
+  DELETE FROM availability WHERE target_type = 'teacher' AND target_id = OLD.id;
+  DELETE FROM availability_notes WHERE target_type = 'teacher' AND target_id = OLD.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_venues_availability AFTER DELETE ON venues
+BEGIN
+  DELETE FROM availability WHERE target_type = 'venue' AND target_id = OLD.id;
+  DELETE FROM availability_notes WHERE target_type = 'venue' AND target_id = OLD.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_sections_availability AFTER DELETE ON sections
+BEGIN
+  DELETE FROM availability WHERE target_type = 'section' AND target_id = OLD.id;
+  DELETE FROM availability_notes WHERE target_type = 'section' AND target_id = OLD.id;
+END;
+`
 
 /**
  * v1 — round-2 rules.
@@ -67,6 +117,22 @@ export const MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_slots_venue       ON slots (venue_id);
         CREATE INDEX IF NOT EXISTS idx_slots_merge_group ON slots (merge_group);
       `)
+    }
+  },
+  {
+    version: 2,
+    name: 'availability requests and constraint override',
+    up(db) {
+      const columns = db
+        .prepare('PRAGMA table_info(slots)')
+        .all()
+        .map((column) => column.name)
+      if (!columns.includes('constraint_override')) {
+        db.exec(
+          'ALTER TABLE slots ADD COLUMN constraint_override INTEGER NOT NULL DEFAULT 0'
+        )
+      }
+      db.exec(AVAILABILITY_SQL)
     }
   }
 ]
