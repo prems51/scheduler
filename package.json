@@ -14,7 +14,8 @@
     "postinstall": "node scripts/ensure-native.js",
     "rebuild:electron": "electron-builder install-app-deps",
     "rebuild:node": "node scripts/rebuild-node.js",
-    "check:pdf": "electron tests/pdf-smoke.mjs"
+    "check:pdf": "electron tests/pdf-smoke.mjs",
+    "dist": "node scripts/ensure-native.js && npm run build && electron-builder --win nsis"
   },
   "build": {
     "appId": "in.ac.mit.timetablemanager",
@@ -23,8 +24,21 @@
       "out/**/*",
       "package.json"
     ],
+    "npmRebuild": false,
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "directories": {
+      "output": "dist"
+    },
     "win": {
       "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true
     }
   },
   "dependencies": {
